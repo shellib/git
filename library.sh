@@ -537,6 +537,7 @@ run_tests() {
     fi
 }
 
+
 # Run tests if --test is passed and we're not being sourced
 if [ "$1" = "--test" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     run_tests
