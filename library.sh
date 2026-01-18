@@ -29,10 +29,21 @@ extract_organization() {
     echo "$url" | sed -n 's/.*\/\/[^\/]*\/\([^\/]*\)\/.*/\1/p'
 }
 
-# Extract repository name from URL
+# Extract repository name from URL (including nested paths like group/subgroup/repo)
 extract_repository() {
     local url="$1"
-    echo "$url" | sed -n 's/.*\/\/[^\/]*\/[^\/]*\/\([^\/]*\).*/\1/p'
+    # Remove protocol and host, then remove the first path segment (org), then extract the repo path
+    # Also strip common GitLab/GitHub path suffixes like /-/, /blob/, /tree/, etc.
+    local repo_path=$(echo "$url" | sed -n 's|.*://[^/]*/[^/]*/\([^?#]*\).*|\1|p')
+    # Remove .git suffix
+    repo_path=$(echo "$repo_path" | sed 's/\.git$//')
+    # Remove GitLab/GitHub specific path segments
+    repo_path=$(echo "$repo_path" | sed 's|/-/.*||')
+    repo_path=$(echo "$repo_path" | sed 's|/blob/.*||')
+    repo_path=$(echo "$repo_path" | sed 's|/tree/.*||')
+    repo_path=$(echo "$repo_path" | sed 's|/pull/.*||')
+    repo_path=$(echo "$repo_path" | sed 's|/merge_requests/.*||')
+    echo "$repo_path"
 }
 
 # Extract path after repository from URL
@@ -59,10 +70,12 @@ build_ssh_url() {
     local org="$2"
     local repo="$3"
     local username="$4"  # Optional username override
-    
+
     if [ -n "$username" ]; then
+        # When username is specified, use it instead of org
         echo "git@$host:$username/$repo.git"
     else
+        # Use org and repo (repo may contain slashes for nested paths)
         echo "git@$host:$org/$repo.git"
     fi
 }
@@ -72,6 +85,7 @@ build_https_url() {
     local host="$1"
     local org="$2"
     local repo="$3"
+    # repo may contain slashes for nested paths (e.g., subgroup/myrepo)
     echo "https://$host/$org/$repo.git"
 }
 
@@ -211,7 +225,12 @@ clone() {
 workspace_path() {
     local host="$1"
     local org="$2"
-    echo "~/workspace/src/$host/$org"
+    local repo="$3"  # Optional: if provided, includes the full path to the repo
+    if [ -n "$repo" ]; then
+        echo "~/workspace/src/$host/$org/$repo"
+    else
+        echo "~/workspace/src/$host/$org"
+    fi
 }
 
 # Test functions
@@ -258,9 +277,18 @@ test_extract_repository() {
     local repo=$(extract_repository "https://github.com/testorg/testrepo")
     if [ "$repo" = "testrepo" ]; then
         echo "✓ extract_repository works"
-        return 0
     else
         echo "✗ extract_repository failed, got: '$repo'"
+        return 1
+    fi
+
+    # Test nested repository path
+    local nested_repo=$(extract_repository "https://gitserver.example.com/mygroup/subgroup/myrepo")
+    if [ "$nested_repo" = "subgroup/myrepo" ]; then
+        echo "✓ extract_repository handles nested paths"
+        return 0
+    else
+        echo "✗ extract_repository failed for nested path, got: '$nested_repo', expected: 'subgroup/myrepo'"
         return 1
     fi
 }
@@ -306,7 +334,7 @@ test_build_ssh_url() {
         echo "✗ build_ssh_url failed without username, got: '$ssh_url'"
         return 1
     fi
-    
+
     # Test with username override
     local ssh_url_with_user=$(build_ssh_url "gitlab.com" "owner" "repo" "customuser")
     if [ "$ssh_url_with_user" = "git@gitlab.com:customuser/repo.git" ]; then
@@ -336,6 +364,39 @@ test_workspace_path() {
         return 0
     else
         echo "✗ workspace_path failed, got: '$workspace'"
+        return 1
+    fi
+}
+
+test_build_ssh_url_nested() {
+    local ssh_url=$(build_ssh_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "$ssh_url" = "git@gitserver.example.com:mygroup/subgroup/myrepo.git" ]; then
+        echo "✓ build_ssh_url works with nested repository path"
+        return 0
+    else
+        echo "✗ build_ssh_url failed with nested path, got: '$ssh_url'"
+        return 1
+    fi
+}
+
+test_build_https_url_nested() {
+    local https_url=$(build_https_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "$https_url" = "https://gitserver.example.com/mygroup/subgroup/myrepo.git" ]; then
+        echo "✓ build_https_url works with nested repository path"
+        return 0
+    else
+        echo "✗ build_https_url failed with nested path, got: '$https_url'"
+        return 1
+    fi
+}
+
+test_workspace_path_nested() {
+    local workspace=$(workspace_path "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "$workspace" = "~/workspace/src/gitserver.example.com/mygroup/subgroup/myrepo" ]; then
+        echo "✓ workspace_path works with nested repository path"
+        return 0
+    else
+        echo "✗ workspace_path failed with nested path, got: '$workspace'"
         return 1
     fi
 }
@@ -510,7 +571,7 @@ EOF
 run_tests() {
     echo "Running tests for git library..."
     local failed=0
-    
+
     test_is_github || failed=1
     test_extract_host || failed=1
     test_extract_organization || failed=1
@@ -521,13 +582,16 @@ run_tests() {
     test_build_ssh_url || failed=1
     test_build_https_url || failed=1
     test_workspace_path || failed=1
+    test_build_ssh_url_nested || failed=1
+    test_build_https_url_nested || failed=1
+    test_workspace_path_nested || failed=1
     test_get_config_values_default || failed=1
     test_get_config_values_host || failed=1
     test_get_config_values_repo || failed=1
     test_get_config_values_no_config || failed=1
     test_get_method || failed=1
     test_clone || failed=1
-    
+
     if [ $failed -eq 0 ]; then
         echo "All tests passed!"
         return 0
