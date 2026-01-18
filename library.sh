@@ -34,15 +34,16 @@ extract_repository() {
     local url="$1"
     # Remove protocol and host, then remove the first path segment (org), then extract the repo path
     # Also strip common GitLab/GitHub path suffixes like /-/, /blob/, /tree/, etc.
-    local repo_path=$(echo "$url" | sed -n 's|.*://[^/]*/[^/]*/\([^?#]*\).*|\1|p')
+    local repo_path
+    repo_path=$(echo "$url" | sed -n 's|.*://[^/]*/[^/]*/\([^?#]*\).*|\1|p')
     # Remove .git suffix
-    repo_path=$(echo "$repo_path" | sed 's/\.git$//')
+    repo_path=$(echo "${repo_path:-}" | sed 's/\.git$//')
     # Remove GitLab/GitHub specific path segments
-    repo_path=$(echo "$repo_path" | sed 's|/-/.*||')
-    repo_path=$(echo "$repo_path" | sed 's|/blob/.*||')
-    repo_path=$(echo "$repo_path" | sed 's|/tree/.*||')
-    repo_path=$(echo "$repo_path" | sed 's|/pull/.*||')
-    repo_path=$(echo "$repo_path" | sed 's|/merge_requests/.*||')
+    repo_path=$(echo "${repo_path:-}" | sed 's|/-/.*||')
+    repo_path=$(echo "${repo_path:-}" | sed 's|/blob/.*||')
+    repo_path=$(echo "${repo_path:-}" | sed 's|/tree/.*||')
+    repo_path=$(echo "${repo_path:-}" | sed 's|/pull/.*||')
+    repo_path=$(echo "${repo_path:-}" | sed 's|/merge_requests/.*||')
     echo "$repo_path"
 }
 
@@ -69,9 +70,9 @@ build_ssh_url() {
     local host="$1"
     local org="$2"
     local repo="$3"
-    local username="$4"  # Optional username override
+    local username="${4:-}"  # Optional username override
 
-    if [ -n "$username" ]; then
+    if [ -n "${username:-}" ]; then
         # When username is specified, use it instead of org
         echo "git@$host:$username/$repo.git"
     else
@@ -112,13 +113,15 @@ get_config_values() {
         if [ -z "$method" ]; then
             local host_section="\"$host\""
             if toml::has_section "$host_section" "$config_file"; then
-                local host_method=$(toml::get_value "$host_section" "method" "$config_file")
-                local host_username=$(toml::get_value "$host_section" "username" "$config_file")
+                local host_method
+                local host_username
+                host_method=$(toml::get_value "$host_section" "method" "$config_file")
+                host_username=$(toml::get_value "$host_section" "username" "$config_file")
                 
-                if [ -n "$host_method" ]; then
+                if [ -n "${host_method:-}" ]; then
                     method="$host_method"
-                    if [ -z "$username" ]; then
-                        username="$host_username"
+                    if [ -z "${username:-}" ]; then
+                        username="${host_username:-}"
                     fi
                 fi
             fi
@@ -127,8 +130,9 @@ get_config_values() {
         # If not found or empty, try global config
         if [ -z "$method" ]; then
             if toml::has_section "default" "$config_file"; then
-                local default_method=$(toml::get_value "default" "method" "$config_file")
-                if [ -n "$default_method" ]; then
+                local default_method
+                default_method=$(toml::get_value "default" "method" "$config_file")
+                if [ -n "${default_method:-}" ]; then
                     method="$default_method"
                 fi
             fi
@@ -137,7 +141,7 @@ get_config_values() {
     fi
     
     # Default to fallback if nothing found
-    if [ -z "$method" ]; then
+    if [ -z "${method:-}" ]; then
         method="fallback"
     fi
     
@@ -146,13 +150,15 @@ get_config_values() {
 
 # Get clone method from config (ssh|https|fallback) - for backward compatibility
 get_method() {
-    local config_values=$(get_config_values "$1" "$2" "$3")
+    local config_values
+    config_values=$(get_config_values "$1" "$2" "$3")
     echo "${config_values%%|*}"
 }
 
 # Get username from config
 get_username() {
-    local config_values=$(get_config_values "$1" "$2" "$3")
+    local config_values
+    config_values=$(get_config_values "$1" "$2" "$3")
     echo "${config_values##*|}"
 }
 
@@ -162,10 +168,12 @@ clone_with_fallback() {
     local org="$2"
     local repo="$3"
     local target_dir="$4"
-    local username="$5"  # Optional username
-    
-    local ssh_url=$(build_ssh_url "$host" "$org" "$repo" "$username")
-    local https_url=$(build_https_url "$host" "$org" "$repo")
+    local username="${5:-}"  # Optional username
+
+    local ssh_url
+    local https_url
+    ssh_url=$(build_ssh_url "$host" "$org" "$repo" "$username")
+    https_url=$(build_https_url "$host" "$org" "$repo")
     
     echo "Attempting SSH clone: $ssh_url"
     
@@ -198,13 +206,16 @@ clone() {
     local org="$2"
     local repo="$3"
     local target_dir="$4"
-    
-    local config_values=$(get_config_values "$host" "$org" "$repo")
+
+    local config_values
+    config_values=$(get_config_values "$host" "$org" "$repo")
     local method="${config_values%%|*}"
     local username="${config_values##*|}"
-    
-    local ssh_url=$(build_ssh_url "$host" "$org" "$repo" "$username")
-    local https_url=$(build_https_url "$host" "$org" "$repo")
+
+    local ssh_url
+    local https_url
+    ssh_url=$(build_ssh_url "$host" "$org" "$repo" "$username")
+    https_url=$(build_https_url "$host" "$org" "$repo")
     
     case "$method" in
         "ssh")
@@ -225,8 +236,8 @@ clone() {
 workspace_path() {
     local host="$1"
     local org="$2"
-    local repo="$3"  # Optional: if provided, includes the full path to the repo
-    if [ -n "$repo" ]; then
+    local repo="${3:-}"  # Optional: if provided, includes the full path to the repo
+    if [ -n "${repo:-}" ]; then
         echo "~/workspace/src/$host/$org/$repo"
     else
         echo "~/workspace/src/$host/$org"
@@ -252,8 +263,9 @@ test_is_github() {
 }
 
 test_extract_host() {
-    local host=$(extract_host "https://gitlab.example.com/owner/repo")
-    if [ "$host" = "gitlab.example.com" ]; then
+    local host
+    host=$(extract_host "https://gitlab.example.com/owner/repo")
+    if [ "${host:-}" = "gitlab.example.com" ]; then
         echo "✓ extract_host works"
         return 0
     else
@@ -263,8 +275,9 @@ test_extract_host() {
 }
 
 test_extract_organization() {
-    local org=$(extract_organization "https://github.com/testorg/testrepo")
-    if [ "$org" = "testorg" ]; then
+    local org
+    org=$(extract_organization "https://github.com/testorg/testrepo")
+    if [ "${org:-}" = "testorg" ]; then
         echo "✓ extract_organization works"
         return 0
     else
@@ -274,8 +287,9 @@ test_extract_organization() {
 }
 
 test_extract_repository() {
-    local repo=$(extract_repository "https://github.com/testorg/testrepo")
-    if [ "$repo" = "testrepo" ]; then
+    local repo
+    repo=$(extract_repository "https://github.com/testorg/testrepo")
+    if [ "${repo:-}" = "testrepo" ]; then
         echo "✓ extract_repository works"
     else
         echo "✗ extract_repository failed, got: '$repo'"
@@ -283,8 +297,9 @@ test_extract_repository() {
     fi
 
     # Test nested repository path
-    local nested_repo=$(extract_repository "https://gitserver.example.com/mygroup/subgroup/myrepo")
-    if [ "$nested_repo" = "subgroup/myrepo" ]; then
+    local nested_repo
+    nested_repo=$(extract_repository "https://gitserver.example.com/mygroup/subgroup/myrepo")
+    if [ "${nested_repo:-}" = "subgroup/myrepo" ]; then
         echo "✓ extract_repository handles nested paths"
         return 0
     else
@@ -294,8 +309,9 @@ test_extract_repository() {
 }
 
 test_extract_path() {
-    local path=$(extract_path "https://github.com/owner/repo/blob/main/file.txt")
-    if [ "$path" = "/blob/main/file.txt" ]; then
+    local path
+    path=$(extract_path "https://github.com/owner/repo/blob/main/file.txt")
+    if [ "${path:-}" = "/blob/main/file.txt" ]; then
         echo "✓ extract_path works"
         return 0
     else
@@ -305,8 +321,9 @@ test_extract_path() {
 }
 
 test_extract_github_pr_number() {
-    local pr=$(extract_github_pr_number "https://github.com/owner/repo/pull/123")
-    if [ "$pr" = "123" ]; then
+    local pr
+    pr=$(extract_github_pr_number "https://github.com/owner/repo/pull/123")
+    if [ "${pr:-}" = "123" ]; then
         echo "✓ extract_github_pr_number works"
         return 0
     else
@@ -316,8 +333,9 @@ test_extract_github_pr_number() {
 }
 
 test_extract_gitlab_mr_number() {
-    local mr=$(extract_gitlab_mr_number "https://gitlab.example.com/owner/repo/-/merge_requests/456")
-    if [ "$mr" = "456" ]; then
+    local mr
+    mr=$(extract_gitlab_mr_number "https://gitlab.example.com/owner/repo/-/merge_requests/456")
+    if [ "${mr:-}" = "456" ]; then
         echo "✓ extract_gitlab_mr_number works"
         return 0
     else
@@ -327,8 +345,9 @@ test_extract_gitlab_mr_number() {
 }
 
 test_build_ssh_url() {
-    local ssh_url=$(build_ssh_url "github.com" "owner" "repo")
-    if [ "$ssh_url" = "git@github.com:owner/repo.git" ]; then
+    local ssh_url
+    ssh_url=$(build_ssh_url "github.com" "owner" "repo")
+    if [ "${ssh_url:-}" = "git@github.com:owner/repo.git" ]; then
         echo "✓ build_ssh_url works without username"
     else
         echo "✗ build_ssh_url failed without username, got: '$ssh_url'"
@@ -336,8 +355,9 @@ test_build_ssh_url() {
     fi
 
     # Test with username override
-    local ssh_url_with_user=$(build_ssh_url "gitlab.com" "owner" "repo" "customuser")
-    if [ "$ssh_url_with_user" = "git@gitlab.com:customuser/repo.git" ]; then
+    local ssh_url_with_user
+    ssh_url_with_user=$(build_ssh_url "gitlab.com" "owner" "repo" "customuser")
+    if [ "${ssh_url_with_user:-}" = "git@gitlab.com:customuser/repo.git" ]; then
         echo "✓ build_ssh_url works with username override"
         return 0
     else
@@ -347,8 +367,9 @@ test_build_ssh_url() {
 }
 
 test_build_https_url() {
-    local https_url=$(build_https_url "gitlab.example.com" "owner" "repo")
-    if [ "$https_url" = "https://gitlab.example.com/owner/repo.git" ]; then
+    local https_url
+    https_url=$(build_https_url "gitlab.example.com" "owner" "repo")
+    if [ "${https_url:-}" = "https://gitlab.example.com/owner/repo.git" ]; then
         echo "✓ build_https_url works"
         return 0
     else
@@ -358,8 +379,9 @@ test_build_https_url() {
 }
 
 test_workspace_path() {
-    local workspace=$(workspace_path "gitlab.example.com" "owner")
-    if [ "$workspace" = "~/workspace/src/gitlab.example.com/owner" ]; then
+    local workspace
+    workspace=$(workspace_path "gitlab.example.com" "owner")
+    if [ "${workspace:-}" = "~/workspace/src/gitlab.example.com/owner" ]; then
         echo "✓ workspace_path works"
         return 0
     else
@@ -369,8 +391,9 @@ test_workspace_path() {
 }
 
 test_build_ssh_url_nested() {
-    local ssh_url=$(build_ssh_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
-    if [ "$ssh_url" = "git@gitserver.example.com:mygroup/subgroup/myrepo.git" ]; then
+    local ssh_url
+    ssh_url=$(build_ssh_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "${ssh_url:-}" = "git@gitserver.example.com:mygroup/subgroup/myrepo.git" ]; then
         echo "✓ build_ssh_url works with nested repository path"
         return 0
     else
@@ -380,8 +403,9 @@ test_build_ssh_url_nested() {
 }
 
 test_build_https_url_nested() {
-    local https_url=$(build_https_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
-    if [ "$https_url" = "https://gitserver.example.com/mygroup/subgroup/myrepo.git" ]; then
+    local https_url
+    https_url=$(build_https_url "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "${https_url:-}" = "https://gitserver.example.com/mygroup/subgroup/myrepo.git" ]; then
         echo "✓ build_https_url works with nested repository path"
         return 0
     else
@@ -391,8 +415,9 @@ test_build_https_url_nested() {
 }
 
 test_workspace_path_nested() {
-    local workspace=$(workspace_path "gitserver.example.com" "mygroup" "subgroup/myrepo")
-    if [ "$workspace" = "~/workspace/src/gitserver.example.com/mygroup/subgroup/myrepo" ]; then
+    local workspace
+    workspace=$(workspace_path "gitserver.example.com" "mygroup" "subgroup/myrepo")
+    if [ "${workspace:-}" = "~/workspace/src/gitserver.example.com/mygroup/subgroup/myrepo" ]; then
         echo "✓ workspace_path works with nested repository path"
         return 0
     else
@@ -410,11 +435,12 @@ test_get_config_values_default() {
 method = "ssh"
 EOF
     
-    local config_values=$(get_config_values "unknown.com" "org" "repo")
+    local config_values
+    config_values=$(get_config_values "unknown.com" "org" "repo")
     local method="${config_values%%|*}"
     local username="${config_values##*|}"
-    
-    if [ "$method" = "ssh" ] && [ -z "$username" ]; then
+
+    if [ "${method:-}" = "ssh" ] && [ -z "${username:-}" ]; then
         echo "✓ get_config_values uses default config"
     else
         echo "✗ get_config_values default failed, method: '$method', username: '$username'"
@@ -440,11 +466,12 @@ method = "https"
 username = "hostuser"
 EOF
     
-    local config_values=$(get_config_values "github.com" "org" "repo")
+    local config_values
+    config_values=$(get_config_values "github.com" "org" "repo")
     local method="${config_values%%|*}"
     local username="${config_values##*|}"
-    
-    if [ "$method" = "https" ] && [ "$username" = "hostuser" ]; then
+
+    if [ "${method:-}" = "https" ] && [ "${username:-}" = "hostuser" ]; then
         echo "✓ get_config_values uses host-specific config"
     else
         echo "✗ get_config_values host failed, method: '$method', username: '$username'"
@@ -473,11 +500,12 @@ method = "fallback"
 username = "repouser"
 EOF
     
-    local config_values=$(get_config_values "gitlab.example.com" "org" "special-repo")
+    local config_values
+    config_values=$(get_config_values "gitlab.example.com" "org" "special-repo")
     local method="${config_values%%|*}"
     local username="${config_values##*|}"
-    
-    if [ "$method" = "fallback" ] && [ "$username" = "repouser" ]; then
+
+    if [ "${method:-}" = "fallback" ] && [ "${username:-}" = "repouser" ]; then
         echo "✓ get_config_values uses repo-specific config"
     else
         echo "✗ get_config_values repo failed, method: '$method', username: '$username'"
@@ -494,11 +522,12 @@ test_get_config_values_no_config() {
     local temp_config="/tmp/nonexistent_config_file_$$"
     export GIT_CONFIG_FILE="$temp_config"
     
-    local config_values=$(get_config_values "github.com" "org" "repo")
+    local config_values
+    config_values=$(get_config_values "github.com" "org" "repo")
     local method="${config_values%%|*}"
     local username="${config_values##*|}"
-    
-    if [ "$method" = "fallback" ] && [ -z "$username" ]; then
+
+    if [ "${method:-}" = "fallback" ] && [ -z "${username:-}" ]; then
         echo "✓ get_config_values defaults when no config file"
     else
         echo "✗ get_config_values no-file failed, method: '$method', username: '$username'"
@@ -522,8 +551,9 @@ method = "https"
 EOF
     
     # Test backward compatibility function
-    local method=$(get_method "unknown.com" "org" "repo")
-    if [ "$method" = "ssh" ]; then
+    local method
+    method=$(get_method "unknown.com" "org" "repo")
+    if [ "${method:-}" = "ssh" ]; then
         echo "✓ get_method backward compatibility works"
     else
         echo "✗ get_method backward compatibility failed, got: '$method'"
@@ -553,8 +583,9 @@ method = "ssh"
 EOF
     
     # Test configured SSH clone
-    local result=$(clone "github.com" "owner" "repo" "target" 2>&1)
-    if echo "$result" | grep -q "Using SSH (configured)"; then
+    local result
+    result=$(clone "github.com" "owner" "repo" "target" 2>&1)
+    if echo "${result:-}" | grep -q "Using SSH (configured)"; then
         echo "✓ clone uses configured SSH"
     else
         echo "✗ clone SSH config failed: $result"
@@ -603,7 +634,7 @@ run_tests() {
 
 
 # Run tests if --test is passed and we're not being sourced
-if [ "$1" = "--test" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+if [ "${1:-}" = "--test" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     run_tests
     exit $?
 fi
